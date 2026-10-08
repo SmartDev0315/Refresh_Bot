@@ -1,0 +1,50 @@
+#da-refresh-bot {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  font-family: Segoe UI, system-ui, sans-serif;
+  pointer-events: none;
+}
+
+.da-refresh-bot-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.92);
+  color: #f9fafb;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.da-refresh-bot-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.2);
+}
+
+#da-refresh-bot-status[data-tone="wait"] + .da-refresh-bot-dot,
+.da-refresh-bot-card:has(#da-refresh-bot-status[data-tone="wait"]) .da-refresh-bot-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.2);
+}
+
+.da-refresh-bot-card:has(#da-refresh-bot-status[data-tone="hit"]) .da-refresh-bot-dot {
+  background: #38bdf8;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25);
+}
+
+.da-refresh-bot-card:has(#da-refresh-bot-status[data-tone="idle"]) .da-refresh-bot-dot {
+  background: #9ca3af;
+  box-shadow: none;
+}
+
+.da-refresh-bot-hit {
+  outline: 3px solid #22c55e !important;
+  background: rgba(34, 197, 94, 0.18) !important;
+}

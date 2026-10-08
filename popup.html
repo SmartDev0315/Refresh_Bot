@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>DA Task Refresh Bot</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>DA Refresh Bot</h1>
+        <p id="pageHint">Watches DataAnnotation projects</p>
+      </div>
+    </header>
+
+    <section class="status">
+      <span class="label">Status</span>
+      <strong id="statusText">Idle</strong>
+    </section>
+
+    <div class="actions">
+      <button type="button" id="startBtn" class="btn-start">Start</button>
+      <button type="button" id="stopBtn" class="btn-stop">Stop</button>
+    </div>
+
+    <section>
+      <span class="label">Refresh seconds (random range)</span>
+      <div class="range-row">
+        <label class="range-field">
+          <span>From</span>
+          <input type="number" id="refreshFrom" min="1" max="120" step="1" />
+        </label>
+        <label class="range-field">
+          <span>To</span>
+          <input type="number" id="refreshTo" min="1" max="120" step="1" />
+        </label>
+        <button type="button" id="refreshUpdateBtn">Update</button>
+      </div>
+      <p class="hint" id="refreshUpdateHint"></p>
+      <label class="field">
+        <span>Current wait (seconds)</span>
+        <input type="number" id="interval" disabled />
+      </label>
+    </section>
+
+    <section>
+      <span class="label">Search titles</span>
+      <form id="addForm">
+        <input type="text" id="newTitle" placeholder="Triton, Ummon, Boxing…" />
+        <button type="submit">Add</button>
+      </form>
+      <ul id="titleList"></ul>
+      <p class="hint" style="margin-top: 4px">Search titles are keywords (Triton, Ummon, Boxing), not the full task name. Priority 1 is clicked first. Only one matching task is clicked.</p>
+    </section>
+
+    <label class="check">
+      <input type="checkbox" id="sound" />
+      <span>Play loud long alarm when a task is found</span>
+    </label>
+    <label class="check">
+      <input type="checkbox" id="notify" />
+      <span>Desktop notification</span>
+    </label>
+    <label class="check">
+      <input type="checkbox" id="emailAlert" />
+      <span>Send email when a task is available</span>
+    </label>
+
+    <section>
+      <span class="label">Alert email</span>
+      <input type="email" id="alertEmail" class="email-input" placeholder="you@example.com" />
+      <div class="email-actions">
+        <button type="button" id="emailAddBtn">Add</button>
+        <button type="button" id="emailUpdateBtn" disabled>Update</button>
+      </div>
+      <button type="button" id="testAlertBtn" class="test-alert">Test notification & email</button>
+      <p class="hint" id="alertResult"></p>
+
+      <span class="label">Web3Forms access key</span>
+      <form id="keyForm">
+        <input type="text" id="web3formsKey" class="email-input" placeholder="Access key from web3forms.com" autocomplete="off" />
+        <div class="email-actions">
+          <button type="button" id="keyUpdateBtn">Update</button>
+        </div>
+      </form>
+      <p class="hint">
+        The key is locked after save. Click Update to edit, then press Enter or Update to save.
+      </p>
+    </section>
+
+    <p class="hint">
+      Keep <code>https://app.dataannotation.tech/workers/projects</code> open.
+      After it clicks a matching task, refresh stops until you press Start again.
+    </p>
+    <script src="popup.js"></script>
+  </body>
+</html>
