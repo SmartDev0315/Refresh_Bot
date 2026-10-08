@@ -498,21 +498,125 @@
     synthesizeClick(target);
   }
 
-  function findEnterWorkModeButton() {
-    const nodes = document.querySelectorAll(
+  function workModeLabel(el) {
+    if (!el) return "";
+    return normalize(
+      el.getAttribute?.("aria-label") ||
+        el.value ||
+        ownText(el) ||
+        ""
+    );
+  }
+
+  function isEnterWorkModeLabel(text) {
+    const t = normalize(text);
+    if (!t || t.length > 60) return false;
+    return /^enter\s+work\s+mode$/i.test(t);
+  }
+
+  function isVisibleClickable(el) {
+    if (!el || el.closest("#da-refresh-bot")) return false;
+    if (!el.getClientRects().length) return false;
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      return false;
+    }
+    return true;
+  }
+
+  function clickableWorkModeTarget(el) {
+    if (!el) return null;
+    const self = el.closest(
       "a, button, [role='button'], input[type='button'], input[type='submit']"
     );
-    for (const el of nodes) {
-      if (!el || inSkipRegion(el) || !el.getClientRects().length) continue;
-      if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
-      const text = normalize(
-        ownText(el) || el.value || el.getAttribute("aria-label") || ""
-      );
-      if (!text || text.length > 80) continue;
-      if (/^enter\s*work\s*mode$/i.test(text) || /\benter\s+work\s+mode\b/i.test(text)) {
-        return el;
+    if (self && isVisibleClickable(self)) return self;
+    let n = el;
+    for (let i = 0; i < 6 && n; i++) {
+      if (isVisibleClickable(n) && (n.onclick || n.getAttribute("tabindex") != null)) {
+        return n;
+      }
+      const cls = String(n.className || "");
+      if (
+        isVisibleClickable(n) &&
+        /\b(btn|button|MuiButton)\b/i.test(`${n.tagName} ${cls}`)
+      ) {
+        return n;
+      }
+      n = n.parentElement;
+    }
+    return self && isVisibleClickable(self) ? self : null;
+  }
+
+  function findEnterWorkModeButton() {
+    // Opposite of Projects list scanning: on the task page the green button
+    // lives inside header / nav / top banner regions that we intentionally skip
+    // when matching project titles. Search those first; never use inSkipRegion.
+    const clickableSel = [
+      "a",
+      "button",
+      "[role='button']",
+      "input[type='button']",
+      "input[type='submit']",
+      "[class*='button' i]",
+      "[class*='Button']"
+    ].join(",");
+
+    function matchInRoot(root) {
+      if (!root || !root.querySelectorAll) return null;
+      for (const el of root.querySelectorAll(clickableSel)) {
+        if (!isVisibleClickable(el)) continue;
+        if (isEnterWorkModeLabel(workModeLabel(el))) return el;
+      }
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        if (isEnterWorkModeLabel(node.textContent || "")) {
+          const target = clickableWorkModeTarget(node.parentElement);
+          if (target) return target;
+        }
+        node = walker.nextNode();
+      }
+      return null;
+    }
+
+    const headerRoots = [
+      ...document.querySelectorAll(
+        "header, nav, [role='banner'], [role='navigation'], [class*='header' i], [class*='banner' i], [class*='toolbar' i]"
+      )
+    ];
+
+    const previewRoots = [...document.querySelectorAll("div, section, aside, header, nav")].filter(
+      (el) => {
+        const t = ownText(el).toLowerCase();
+        return (
+          t.includes("ready to start working") &&
+          t.includes("enter work mode") &&
+          t.length < 600
+        );
+      }
+    );
+
+    // Prefer the smallest "Ready to start working?" banner, then header/nav, then whole page.
+    const rankedPreview = previewRoots.sort(
+      (a, b) => ownText(a).length - ownText(b).length
+    );
+    for (const root of [...rankedPreview, ...headerRoots, document.body]) {
+      const hit = matchInRoot(root);
+      if (hit) return hit;
+    }
+
+    // Last resort inside the preview banner: any visible control mentioning Enter Work.
+    for (const root of rankedPreview) {
+      for (const el of root.querySelectorAll(clickableSel)) {
+        if (!isVisibleClickable(el)) continue;
+        const label = workModeLabel(el).toLowerCase();
+        if (label.includes("enter") && label.includes("work") && label.includes("mode")) {
+          return el;
+        }
       }
     }
+
     return null;
   }
 
@@ -554,20 +658,24 @@
     ensureOverlay();
     setStatus("Waiting for task page…", "run");
 
-    const deadline = Date.now() + 20000;
+    const deadline = Date.now() + 30000;
     const begin = () => {
       if (workModeDone) return;
       setStatus("Looking for Enter Work Mode…", "run");
-      if (attemptEnterWorkMode(deadline)) return;
+      // Give the preview banner a short moment after load before first pass.
+      setTimeout(() => {
+        if (workModeDone) return;
+        if (attemptEnterWorkMode(deadline)) return;
 
-      scanTimer = setInterval(() => {
-        if (attemptEnterWorkMode(deadline)) clearTimers();
-      }, 400);
+        scanTimer = setInterval(() => {
+          if (attemptEnterWorkMode(deadline)) clearTimers();
+        }, 300);
 
-      observer = new MutationObserver(() => {
-        attemptEnterWorkMode(deadline);
-      });
-      observer.observe(document.documentElement, { childList: true, subtree: true });
+        observer = new MutationObserver(() => {
+          attemptEnterWorkMode(deadline);
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+      }, 250);
     };
 
     if (document.readyState === "complete") {
