@@ -14,6 +14,7 @@ const DEFAULTS = {
   emailAlert: true,
   alertEmail: "",
   web3formsKey: "9af3a915-0f20-432d-abf4-efe47fdb1f0e",
+  ongoingTriton: false,
   lastStatus: "Idle",
   stoppedAfterClick: false,
   lastAlertResult: ""

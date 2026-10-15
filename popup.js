@@ -5,6 +5,7 @@ const refreshUpdateBtn = document.getElementById("refreshUpdateBtn");
 const refreshUpdateHint = document.getElementById("refreshUpdateHint");
 const newTitleEl = document.getElementById("newTitle");
 const titleListEl = document.getElementById("titleList");
+const ongoingTritonEl = document.getElementById("ongoingTriton");
 const soundEl = document.getElementById("sound");
 const notifyEl = document.getElementById("notify");
 const emailAlertEl = document.getElementById("emailAlert");
@@ -93,6 +94,7 @@ async function load() {
   const data = await chrome.storage.local.get([
     "enabled",
     "titles",
+    "ongoingTriton",
     "sound",
     "notify",
     "emailAlert",
@@ -110,6 +112,7 @@ async function load() {
   refreshToEl.value = data.refreshTo ?? 8;
   intervalEl.value =
     data.nextRefreshSeconds != null ? data.nextRefreshSeconds : "";
+  ongoingTritonEl.checked = data.ongoingTriton === true;
   soundEl.checked = data.sound !== false;
   notifyEl.checked = data.notify !== false;
   emailAlertEl.checked = data.emailAlert !== false;
@@ -241,6 +244,10 @@ stopBtn.addEventListener("click", () => {
   });
   setRunning(false);
   statusTextEl.textContent = "Stopped";
+});
+
+ongoingTritonEl.addEventListener("change", () => {
+  chrome.storage.local.set({ ongoingTriton: ongoingTritonEl.checked });
 });
 
 soundEl.addEventListener("change", () => {

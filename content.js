@@ -1,5 +1,6 @@
 (() => {
   const PROJECTS_PATH = "/workers/projects";
+  const PROJECTS_URL = "https://app.dataannotation.tech/workers/projects";
   const SKIP_SELECTORS = [
     "header",
     "nav",
@@ -33,6 +34,7 @@
       { name: "Boxing", priority: 3 }
     ],
     sound: true,
+    ongoingTriton: false,
     stoppedAfterClick: false,
     pendingWorkMode: false
   };
@@ -46,6 +48,8 @@
   let lastMatch = null;
   let alertSent = false;
   let workModeDone = false;
+  let workModeClickPending = false;
+  let unavailableHandled = false;
 
   function pagePath() {
     return location.pathname.replace(/\/+$/, "") || "/";
@@ -364,12 +368,220 @@
     return nodes;
   }
 
-  function considerMatch(titleEl, text, hit, best, bestRank) {
+  function headingKind(text) {
+    const t = normalize(text);
+    if (/^in progress tasks?\b/i.test(t)) return "inprogress";
+    if (/^projects\b/i.test(t) && t.length <= 40) return "projects";
+    return "";
+  }
+
+  function findSectionHeading(kind) {
+    const roots = projectsListRoots();
+    const nodes = queryInRoots(
+      roots,
+      "h1, h2, h3, h4, h5, h6, [class*='heading' i], [class*='title' i], [class*='subheader' i]"
+    );
+    for (const el of nodes) {
+      if (!el.getClientRects().length) continue;
+      const label = titleLabel(el) || ownText(el);
+      if (headingKind(label) === kind) return el;
+    }
+    for (const root of roots) {
+      const walk = root.querySelectorAll("div, span, p, h1, h2, h3, h4, h5, h6");
+      for (const el of walk) {
+        if (!el.getClientRects().length) continue;
+        const label = normalize(ownText(el));
+        if (label.length > 40) continue;
+        if (headingKind(label) === kind) return el;
+      }
+    }
+    return null;
+  }
+
+  function sectionContentRoot(headingEl) {
+    if (!headingEl) return null;
+    const section = headingEl.closest("section, article, [class*='section' i]");
+    if (section && section !== document.body) return section;
+    let parent = headingEl.parentElement;
+    for (let i = 0; i < 5 && parent; i++) {
+      if (parent.querySelector("table, tbody, a[href], [class*='row' i]")) return parent;
+      parent = parent.parentElement;
+    }
+    return headingEl.parentElement;
+  }
+
+  function nodesUntilNextSection(headingEl) {
+    const collected = [];
+    if (!headingEl) return collected;
+    let el = headingEl.nextElementSibling;
+    while (el) {
+      const label = titleLabel(el) || ownText(el);
+      const kind = headingKind(label.length <= 40 ? label : "");
+      if (kind) break;
+      const nestedHeading = [...el.querySelectorAll("h1, h2, h3, h4, h5, h6")].find((h) =>
+        headingKind(titleLabel(h) || ownText(h))
+      );
+      if (nestedHeading && nestedHeading !== headingEl) break;
+      collected.push(el);
+      el = el.nextElementSibling;
+    }
+    if (collected.length) return collected;
+    const root = sectionContentRoot(headingEl);
+    return root ? [root] : [];
+  }
+
+  function inProgressSectionRoots() {
+    const heading = findSectionHeading("inprogress");
+    return nodesUntilNextSection(heading);
+  }
+
+  function availableProjectsSectionRoots() {
+    const heading = findSectionHeading("projects");
+    if (heading) {
+      const nodes = nodesUntilNextSection(heading);
+      if (nodes.length) return nodes;
+      const root = sectionContentRoot(heading);
+      if (root) return [root];
+    }
+    // Fallback: whole tab panel minus In Progress section.
+    const all = projectsListRoots();
+    const inProgress = inProgressSectionRoots();
+    if (!inProgress.length) return all;
+    return all;
+  }
+
+  function inInProgressRegion(el) {
+    if (!el) return false;
+    return inProgressSectionRoots().some((root) => root.contains(el));
+  }
+
+  function normalizeProjectKey(text) {
+    return normalize(text)
+      .toLowerCase()
+      .replace(/[^\w\s.-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function sameProjectTitle(a, b) {
+    const na = normalizeProjectKey(a);
+    const nb = normalizeProjectKey(b);
+    if (!na || !nb) return false;
+    if (na === nb) return true;
+    if (na.startsWith(nb) || nb.startsWith(na)) return true;
+    return false;
+  }
+
+  function rowTaskTitle(row) {
+    if (!row) return "";
+    const link = [...row.querySelectorAll("a[href]")].find((a) =>
+      isTaskHref(a.getAttribute("href") || a.href)
+    );
+    if (link) return normalize(ownText(link));
+    const cell = row.querySelector("td, [class*='name' i], [class*='title' i]");
+    if (cell) {
+      const text = normalize(ownText(cell)).split("\n")[0];
+      if (text && text.length <= 160) return text;
+    }
+    const full = normalize(ownText(row)).split("\n")[0];
+    return full.length <= 160 ? full : "";
+  }
+
+  function listTitlesInRoots(roots) {
+    const titles = [];
+    const seen = new Set();
+    for (const root of roots) {
+      const rows = root.querySelectorAll("table tbody tr, tr");
+      let usedRows = false;
+      for (const row of rows) {
+        if (!row.getClientRects().length) continue;
+        if (row.querySelector("th") && !row.querySelector("td")) continue;
+        const title = rowTaskTitle(row);
+        if (!title || isNoise(title) || /^(task|name|pay|started|expires)$/i.test(title)) {
+          continue;
+        }
+        usedRows = true;
+        const key = normalizeProjectKey(title);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        titles.push(title);
+      }
+      if (usedRows) continue;
+      for (const a of root.querySelectorAll("a[href]")) {
+        if (!isTaskHref(a.getAttribute("href") || a.href)) continue;
+        if (!a.getClientRects().length) continue;
+        const title = normalize(ownText(a));
+        if (!title || title.length > 160 || isNoise(title)) continue;
+        const key = normalizeProjectKey(title);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        titles.push(title);
+      }
+    }
+    return titles;
+  }
+
+  function getInProgressTitles() {
+    return listTitlesInRoots(inProgressSectionRoots());
+  }
+
+  function getInProgressGate() {
+    const inProgressTitles = getInProgressTitles();
+    const count = inProgressTitles.length;
+    const ongoing = settings.ongoingTriton === true;
+
+    if (count === 0) {
+      return { action: "watch", excludeTitles: [], inProgressTitles };
+    }
+    if (!ongoing && count >= 1) {
+      return {
+        action: "stop",
+        message: `In Progress (${count}) — stopped (enable Ongoing Projects-Triton to continue)`,
+        excludeTitles: inProgressTitles,
+        inProgressTitles
+      };
+    }
+    if (ongoing && count >= 2) {
+      return {
+        action: "stop",
+        message: `In Progress (${count}) — stopped (Ongoing Projects-Triton allows only 1)`,
+        excludeTitles: inProgressTitles,
+        inProgressTitles
+      };
+    }
+    // ongoing && count === 1
+    return {
+      action: "watch",
+      excludeTitles: inProgressTitles,
+      inProgressTitles,
+      message: `Ongoing mode — skipping In Progress: ${inProgressTitles[0]}`
+    };
+  }
+
+  function haltBot(message) {
+    clearTimers();
+    settings.enabled = false;
+    settings.stoppedAfterClick = false;
+    settings.pendingWorkMode = false;
+    setStatus(message, "idle");
+    chrome.storage.local.set({
+      enabled: false,
+      stoppedAfterClick: false,
+      pendingWorkMode: false,
+      lastStatus: message
+    });
+  }
+
+  function considerMatch(titleEl, text, hit, best, bestRank, excludeTitles) {
     if (!titleEl || inSkipRegion(titleEl) || !titleEl.getClientRects().length) {
       return { best, bestRank };
     }
+    if (inInProgressRegion(titleEl)) return { best, bestRank };
     const label = titleLabel(titleEl) || text;
     if (!label || label.length > 160 || isNoise(label)) return { best, bestRank };
+    if ((excludeTitles || []).some((t) => sameProjectTitle(label, t))) {
+      return { best, bestRank };
+    }
     if (/^(start|complete qualification|continue)$/i.test(label) && !matchesTitle(label)) {
       return { best, bestRank };
     }
@@ -392,8 +604,8 @@
     };
   }
 
-  function findMatch() {
-    const roots = projectsListRoots();
+  function findMatch(excludeTitles = []) {
+    const roots = availableProjectsSectionRoots();
     if (!roots.length) return null;
 
     let best = null;
@@ -406,6 +618,7 @@
     );
     for (const el of primary) {
       if (!el || inSkipRegion(el) || !el.getClientRects().length) continue;
+      if (inInProgressRegion(el)) continue;
       const text = titleLabel(el);
       if (!text || text.length > 160 || isNoise(text)) continue;
       const hit = matchesTitle(text);
@@ -413,7 +626,14 @@
       const titleEl = el.tagName === "A" ? el : el.closest("a[href]") || el;
       if (seen.has(titleEl)) continue;
       seen.add(titleEl);
-      ({ best, bestRank } = considerMatch(titleEl, text, hit, best, bestRank));
+      ({ best, bestRank } = considerMatch(
+        titleEl,
+        text,
+        hit,
+        best,
+        bestRank,
+        excludeTitles
+      ));
     }
 
     if (best) return best;
@@ -424,6 +644,7 @@
     );
     for (const el of fallback) {
       if (!el || inSkipRegion(el) || !el.getClientRects().length) continue;
+      if (inInProgressRegion(el)) continue;
       const text = ownText(el);
       if (!text || text.length > 160 || isNoise(text)) continue;
       const hit = matchesTitle(text);
@@ -431,7 +652,14 @@
       const titleEl = el.closest("a[href]") || el;
       if (seen.has(titleEl)) continue;
       seen.add(titleEl);
-      ({ best, bestRank } = considerMatch(titleEl, text, hit, best, bestRank));
+      ({ best, bestRank } = considerMatch(
+        titleEl,
+        text,
+        hit,
+        best,
+        bestRank,
+        excludeTitles
+      ));
     }
     return best;
   }
@@ -622,6 +850,7 @@
 
   function finishPendingWorkMode(status, tone) {
     workModeDone = true;
+    workModeClickPending = false;
     settings.pendingWorkMode = false;
     settings.enabled = false;
     settings.stoppedAfterClick = true;
@@ -635,18 +864,93 @@
     });
   }
 
+  function isTaskUnavailablePage() {
+    const body = normalize(document.body?.innerText || "").toLowerCase();
+    if (!body) return false;
+    const patterns = [
+      /no longer available/,
+      /task (is|was) unavailable/,
+      /project (is|was) unavailable/,
+      /this (task|project) (is|has been) (currently )?unavailable/,
+      /sorry[,.]? this (task|project).{0,40}unavailable/,
+      /not (currently )?available (for you )?to work/,
+      /project you (selected|requested).{0,40}(unavailable|no longer)/
+    ];
+    return patterns.some((re) => re.test(body));
+  }
+
+  function resumeProjectsAfterUnavailable() {
+    if (unavailableHandled || workModeDone) return;
+    unavailableHandled = true;
+    workModeDone = true;
+    workModeClickPending = false;
+    clearTimers();
+    settings.pendingWorkMode = false;
+    settings.stoppedAfterClick = false;
+    settings.enabled = true;
+    clicked = false;
+    delete document.documentElement.dataset.daBotClicked;
+    setStatus("Task unavailable — returning to Projects…", "wait");
+    chrome.storage.local.set(
+      {
+        enabled: true,
+        stoppedAfterClick: false,
+        pendingWorkMode: false,
+        forceProjectsReload: true,
+        lastStatus: "Task unavailable — returning to Projects…"
+      },
+      () => {
+        location.assign(PROJECTS_URL);
+      }
+    );
+  }
+
   function attemptEnterWorkMode(deadline) {
     if (workModeDone) return true;
     closeBlockingModal();
-    const btn = findEnterWorkModeButton();
-    if (btn) {
-      setStatus("Clicking Enter Work Mode…", "hit");
-      btn.classList.add("da-refresh-bot-hit");
-      synthesizeClick(btn);
-      finishPendingWorkMode("Entered Work Mode — stopped", "idle");
+
+    if (isTaskUnavailablePage()) {
+      resumeProjectsAfterUnavailable();
       return true;
     }
+
+    const btn = findEnterWorkModeButton();
+    if (btn) {
+      if (!workModeClickPending) {
+        workModeClickPending = true;
+        setStatus("Clicking Enter Work Mode…", "hit");
+        try {
+          btn.scrollIntoView({ block: "center", inline: "nearest" });
+        } catch (_e) {
+          /* ignore */
+        }
+        btn.classList.add("da-refresh-bot-hit");
+        synthesizeClick(btn);
+        setTimeout(() => {
+          if (workModeDone) return;
+          workModeClickPending = false;
+          if (isTaskUnavailablePage()) {
+            resumeProjectsAfterUnavailable();
+            return;
+          }
+          if (!findEnterWorkModeButton()) {
+            finishPendingWorkMode("Entered Work Mode — stopped", "idle");
+          }
+        }, 900);
+      }
+      if (Date.now() >= deadline) {
+        synthesizeClick(btn);
+        finishPendingWorkMode("Entered Work Mode — stopped", "idle");
+        return true;
+      }
+      return false;
+    }
+
     if (Date.now() >= deadline) {
+      if (isTaskUnavailablePage()) {
+        resumeProjectsAfterUnavailable();
+        return true;
+      }
       finishPendingWorkMode("Opened project — no Enter Work Mode button", "idle");
       return true;
     }
@@ -656,26 +960,31 @@
   function startWorkModeWatch() {
     if (workModeDone) return;
     ensureOverlay();
+    unavailableHandled = false;
+    workModeClickPending = false;
     setStatus("Waiting for task page…", "run");
 
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + 45000;
     const begin = () => {
       if (workModeDone) return;
       setStatus("Looking for Enter Work Mode…", "run");
-      // Give the preview banner a short moment after load before first pass.
       setTimeout(() => {
         if (workModeDone) return;
         if (attemptEnterWorkMode(deadline)) return;
 
         scanTimer = setInterval(() => {
           if (attemptEnterWorkMode(deadline)) clearTimers();
-        }, 300);
+        }, 250);
 
         observer = new MutationObserver(() => {
           attemptEnterWorkMode(deadline);
         });
-        observer.observe(document.documentElement, { childList: true, subtree: true });
-      }, 250);
+        observer.observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+          attributes: true
+        });
+      }, 400);
     };
 
     if (document.readyState === "complete") {
@@ -685,7 +994,7 @@
     }
   }
 
-  function clickMatch(match) {
+  async function clickMatch(match) {
     if (hasClickedLock()) return;
     clickingInProgress = true;
     clicked = true;
@@ -701,23 +1010,18 @@
       title: `${match.hit}: ${match.text}`,
       at: Date.now()
     };
+    const base = {
+      enabled: false,
+      stoppedAfterClick: true,
+      pendingWorkMode: true,
+      lastStatus: status
+    };
     if (!alertSent) {
       alertSent = true;
-      chrome.storage.local.set({
-        enabled: false,
-        stoppedAfterClick: true,
-        pendingWorkMode: true,
-        lastStatus: status,
-        pendingAlert: payload
-      });
+      await chrome.storage.local.set({ ...base, pendingAlert: payload });
       chrome.runtime.sendMessage({ type: "notify-match", ...payload }).catch(() => {});
     } else {
-      chrome.storage.local.set({
-        enabled: false,
-        stoppedAfterClick: true,
-        pendingWorkMode: true,
-        lastStatus: status
-      });
+      await chrome.storage.local.set(base);
     }
     openTask(match);
   }
@@ -746,7 +1050,14 @@
     if (!settings.enabled || hasClickedLock()) return false;
     closeBlockingModal();
     if (activateProjectsTab()) return false;
-    const match = findMatch();
+
+    const gate = getInProgressGate();
+    if (gate.action === "stop") {
+      haltBot(gate.message);
+      return true;
+    }
+
+    const match = findMatch(gate.excludeTitles || []);
     if (match) {
       clickMatch(match);
       return true;
@@ -769,10 +1080,11 @@
     chrome.storage.local.set({ nextRefreshSeconds: seconds });
   }
 
-  function scheduleReload() {
+  function scheduleReload(statusPrefix) {
     let remaining = randomRefreshSeconds();
     setRefreshSecondsDisplay(remaining);
-    setStatus(`Projects empty — refresh in ${remaining}s`, "wait");
+    const prefix = statusPrefix || "Projects empty";
+    setStatus(`${prefix} — refresh in ${remaining}s`, "wait");
 
     if (countdownTimer) {
       clearInterval(countdownTimer);
@@ -791,7 +1103,7 @@
         return;
       }
       setRefreshSecondsDisplay(remaining);
-      setStatus(`Projects empty — refresh in ${remaining}s`, "wait");
+      setStatus(`${prefix} — refresh in ${remaining}s`, "wait");
     }, 1000);
 
     reloadTimer = setTimeout(() => {
@@ -815,7 +1127,18 @@
       return;
     }
 
+    if (isTaskPage() && !settings.pendingWorkMode && !settings.stoppedAfterClick) {
+      if (isTaskUnavailablePage()) {
+        resumeProjectsAfterUnavailable();
+        return;
+      }
+    }
+
     if (settings.pendingWorkMode && !isListPage()) {
+      if (isTaskPage() && isTaskUnavailablePage()) {
+        resumeProjectsAfterUnavailable();
+        return;
+      }
       finishPendingWorkMode("Opened project — stopped", "idle");
       ensureOverlay();
       return;
@@ -832,6 +1155,15 @@
     }
 
     ensureOverlay();
+
+    if (settings.forceProjectsReload) {
+      settings.forceProjectsReload = false;
+      setStatus("Reloading Projects…", "wait");
+      chrome.storage.local.remove("forceProjectsReload", () => {
+        location.reload();
+      });
+      return;
+    }
 
     if (hasClickedLock() || settings.stoppedAfterClick) {
       clicked = true;
@@ -853,8 +1185,16 @@
     setStatus("Watching Projects tab…", "run");
     switchedToProjects = false;
     workModeDone = false;
+    unavailableHandled = false;
+    alertSent = false;
 
     if (scanOnce()) return;
+
+    const gate = getInProgressGate();
+    const waitPrefix =
+      gate.action === "watch" && gate.excludeTitles?.length
+        ? "Waiting for other Projects"
+        : "Projects empty";
 
     scanTimer = setInterval(() => {
       if (scanOnce()) clearTimers();
@@ -869,7 +1209,7 @@
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
-    scheduleReload();
+    scheduleReload(waitPrefix);
   }
 
   async function loadAndStart() {
@@ -879,8 +1219,10 @@
       "refreshTo",
       "titles",
       "sound",
+      "ongoingTriton",
       "stoppedAfterClick",
-      "pendingWorkMode"
+      "pendingWorkMode",
+      "forceProjectsReload"
     ]);
     const titles = Array.isArray(stored.titles)
       ? stored.titles.filter((t) => {
@@ -901,8 +1243,10 @@
       refreshTo: stored.refreshTo ?? 8,
       titles,
       sound: stored.sound !== false,
+      ongoingTriton: stored.ongoingTriton === true,
       stoppedAfterClick: stored.stoppedAfterClick === true,
-      pendingWorkMode: stored.pendingWorkMode === true
+      pendingWorkMode: stored.pendingWorkMode === true,
+      forceProjectsReload: stored.forceProjectsReload === true
     };
     if (settings.stoppedAfterClick) {
       clicked = true;
@@ -910,6 +1254,7 @@
     } else if (stored.enabled === true && stored.stoppedAfterClick !== true) {
       clicked = false;
       workModeDone = false;
+      unavailableHandled = false;
       delete document.documentElement.dataset.daBotClicked;
     }
     start();
@@ -922,6 +1267,7 @@
       changes.enabled ||
       changes.titles ||
       changes.sound ||
+      changes.ongoingTriton ||
       changes.stoppedAfterClick ||
       changes.refreshFrom ||
       changes.refreshTo ||

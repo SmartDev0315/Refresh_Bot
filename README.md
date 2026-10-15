@@ -19,9 +19,11 @@ On the Chrome **Manage extensions** page it is named **Blur. The Image and Video
 5. If several matching tasks are visible, it clicks **only the highest priority** one (priority **1** first).
 6. If several tasks contain the **same search word** (for example two names that both include Boxing), it still clicks **only one** of them.
 7. After that click, the bot **stops automatically** until you press Start again.
-8. After navigation to the task page (`/workers/tasks?project_id=…`), it waits for the page to finish loading. If a green **Enter Work Mode** button is present, it clicks that button, then stops. If the button is missing, it still stops.
-9. You can save **one alert email**. After Add, use Update to change it. When a task is available, it sends **Task is Available** to that address.
-10. Qualification banners, passkey popups, and similar cards are ignored.
+8. After navigation to the task page (`/workers/tasks/…?project_id=…`), it waits for the page to finish loading. If a green **Enter Work Mode** button is present, it clicks that button, then stops. If the button is missing, it still stops.
+9. If the opened task page says the task is **unavailable**, it returns to the Projects page, fully reloads, and resumes watching.
+10. **Ongoing Projects-Triton** checkbox: unchecked + any In Progress task → stop. Checked + 1 In Progress → keep watching the **Projects** list and skip that same in-progress task. Checked + 2+ In Progress → stop. Matching only looks under the Projects section, not In Progress Tasks.
+11. You can save **one alert email**. After Add, use Update to change it. When a task is available, it sends **Task is Available** to that address.
+12. Qualification banners, passkey popups, and similar cards are ignored.
 
 ---
 
